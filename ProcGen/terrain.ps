@@ -1,0 +1,186 @@
+////////////////////////////////////////////////////////////////////////////////
+// Filename: terrain.ps
+////////////////////////////////////////////////////////////////////////////////
+
+Texture2D grassTexture : register(t0);
+Texture2D slopeTexture : register(t1);
+Texture2D rockTexture  : register(t2);
+Texture2D snowTexture  : register(t3);
+Texture2D sandTexture  : register(t4);
+
+/////////////
+// GLOBALS //
+/////////////
+SamplerState SampleType;
+
+cbuffer LightBuffer
+{
+	float4 ambientColor;
+	float4 diffuseColor;
+    float3 lightDirection;
+	float padding;
+};
+
+//////////////
+// TYPEDEFS //
+//////////////
+struct PixelInputType
+{
+    float4 position : SV_POSITION;
+	float2 tex : TEXCOORD0;
+	float3 normal : NORMAL;
+	float4 globalpos : POSITION;
+};
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Pixel Shader
+////////////////////////////////////////////////////////////////////////////////
+float4 TerrainPixelShader(PixelInputType input) : SV_TARGET
+{
+	//THIS BASE SLOPE CONCEPT AND TEXTURING WAS DEMONSTRATED ON RASTERTEK, SEE REPORT FOR DETAILS
+
+	float height;
+	float4 snowColor;
+	float4 rockColor;
+    float4 slopeColor;
+	float4 grassColor;
+	float4 sandColor;
+    float slope;
+    float blendAmount;
+    float4 textureColor;
+	float3 lightDir;
+	float lightIntensity;
+	float4 color;
+
+	//slope based colour changes
+
+	// Sample the grass color from the texture using the sampler at this texture coordinate location.
+	snowColor = snowTexture.Sample(SampleType, input.tex);
+
+	// Sample the grass color from the texture using the sampler at this texture coordinate location.
+    grassColor = grassTexture.Sample(SampleType, input.tex);
+
+    // Sample the slope color from the texture using the sampler at this texture coordinate location.
+    slopeColor = slopeTexture.Sample(SampleType, input.tex);
+
+    // Sample the rock color from the texture using the sampler at this texture coordinate location.
+    rockColor = rockTexture.Sample(SampleType, input.tex);
+
+	 // Sample the rock color from the texture using the sampler at this texture coordinate location.
+    sandColor = sandTexture.Sample(SampleType, input.tex);
+
+	// Calculate the slope of this point.
+    slope = 1.0f - input.normal.y;
+
+	//Height of this current vertex
+	height = input.globalpos.y;
+
+	//how high up you want snow to appear
+	float snowHeight = 4.0f; // 2
+	// height that only snow will appear past this
+	float maxHeight = 8.0f; // 4
+
+	//how low before sand appears
+	float sandHeight = 1.0f; // -0.5
+	//point where only sand will appear
+	float minHeight = -2.0f; // 2
+
+	float heightBlendAmount = (height - snowHeight) * (1.0f / (maxHeight - snowHeight));
+	float heightSandBlendAmount = (sandHeight - height) * (1.0f / (sandHeight - minHeight));
+	
+	// Determine which texture to use based on slope
+	//flat slope
+	if(slope < 0.15) //0.2
+	{
+		blendAmount = slope / 0.15f;
+
+		//if high enough for snow
+		if(height > snowHeight)
+			textureColor = lerp(slopeColor, snowColor, heightBlendAmount);
+
+		//if low enough for sand
+		else if(height < sandHeight)
+			textureColor = lerp(slopeColor, sandColor, heightSandBlendAmount);
+
+		//middle area for grass
+		else
+			textureColor = lerp(grassColor, slopeColor, blendAmount);
+	}
+	
+	//middle slope
+	if((slope < 0.7) && (slope >= 0.1f))
+	{
+		//blending for slopes
+		blendAmount = (slope - 0.15f) * (1.0f / (0.7f - 0.15f));
+
+		//create color between slope and rock
+		float4 midPointColor = lerp(slopeColor, rockColor, blendAmount);
+
+		//ensures that if drops below the snow height that the snow colour will no longer be used
+		if(height - snowHeight > 0)
+		{
+			//create blend between midpoint and snow, based on height
+			//(i.e Will fully use the midpoint regular slope if below the snow height)
+			textureColor = lerp(midPointColor, snowColor, heightBlendAmount);
+		}
+
+		//low enough for slope to have sand
+		else if(sandHeight - height > 0)
+		{
+			//blend from midpoint slope colour and sand colour
+			textureColor = lerp(midPointColor, sandColor, heightSandBlendAmount);
+		}
+
+		else
+			textureColor = midPointColor;
+
+	}
+
+	//almost vertical slope
+	if(slope >= 0.7) 
+	{
+		//use full snow if very steep and high
+		if(height > snowHeight)
+			textureColor = snowColor;
+
+		//use full rock if very steep
+		else
+			textureColor = rockColor;
+	}
+
+	//ensure that if the height goes above the max, only snow will appear
+	if(height > maxHeight)
+		textureColor = snowColor;
+		
+	//makes sure only pure sand is used below certain amount
+	if(height < minHeight)
+		textureColor = sandColor; 
+	
+	 
+
+	///////////////////////////////////////////////
+	//Regular light based colour changes
+	// Set the default output color to the ambient light value for all pixels.
+    color = ambientColor;
+
+	// Invert the light direction for calculations.
+    lightDir = -lightDirection;
+
+    // Calculate the amount of light on this pixel.
+    lightIntensity = saturate(dot(input.normal, lightDir));
+
+	if(lightIntensity > 0.0f)
+    {
+        // Determine the final diffuse color based on the diffuse color and the amount of light intensity.
+        color += (diffuseColor * lightIntensity);
+    }
+
+    // Saturate the final light color.
+    color = saturate(color);
+
+	//use the texture colour and light based colour
+	color = color * textureColor;
+
+    return color;
+}
